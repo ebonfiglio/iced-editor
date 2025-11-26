@@ -1,6 +1,6 @@
 use iced::{
     Element, Length, Task, Theme,
-    widget::{column, container, horizontal_space, row, text, text_editor},
+    widget::{button, column, container, horizontal_space, row, text, text_editor},
 };
 use smol::io;
 use std::path::Path;
@@ -14,6 +14,7 @@ pub fn main() -> iced::Result {
 
 struct Editor {
     content: text_editor::Content,
+    error: Option<Error>,
 }
 
 impl Editor {
@@ -21,10 +22,11 @@ impl Editor {
         (
             Self {
                 content: text_editor::Content::new(),
+                error: None,
             },
             Task::perform(
                 load_file(format!("{}/src/main.rs", env!("CARGO_MANIFEST_DIR"))),
-                Message::FileLoaded,
+                Message::FileOpened,
             ),
         )
     }
@@ -33,7 +35,8 @@ impl Editor {
 #[derive(Debug, Clone)]
 enum Message {
     Edit(text_editor::Action),
-    FileLoaded(Result<Arc<String>, io::ErrorKind>),
+    Open,
+    FileOpened(Result<Arc<String>, Error>),
 }
 
 impl Editor {
@@ -43,19 +46,20 @@ impl Editor {
                 self.content.perform(action);
                 Task::none()
             }
-            Message::FileLoaded(Ok(contents)) => {
+            Message::Open => Task::perform(pick_file(), Message::FileOpened),
+            Message::FileOpened(Ok(contents)) => {
                 self.content = text_editor::Content::with_text(&contents);
                 Task::none()
             }
-            Message::FileLoaded(Err(error)) => {
-                self.content =
-                    text_editor::Content::with_text(&format!("Error loading file: {:?}", error));
+            Message::FileOpened(Err(error)) => {
+                self.error = Some(error);
                 Task::none()
             }
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
+        let controls = row![button("Open").on_press(Message::Open)];
         let input = text_editor(&self.content)
             .height(Length::Fill)
             .on_action(Message::Edit);
@@ -68,7 +72,7 @@ impl Editor {
 
         let status_bar = row![horizontal_space(), position];
 
-        container(column![input, status_bar].spacing(10))
+        container(column![controls, input, status_bar].spacing(10))
             .padding(10)
             .into()
     }
@@ -78,9 +82,26 @@ impl Editor {
     }
 }
 
-async fn load_file(path: impl AsRef<Path>) -> Result<Arc<String>, io::ErrorKind> {
+async fn pick_file() -> Result<Arc<String>, Error> {
+    let handle = rfd::AsyncFileDialog::new()
+        .set_title("Choose a text file...")
+        .pick_file()
+        .await
+        .ok_or(Error::DialogClosed)?;
+
+    load_file(handle.path()).await
+}
+
+async fn load_file(path: impl AsRef<Path>) -> Result<Arc<String>, Error> {
     smol::fs::read_to_string(path)
         .await
         .map(Arc::new)
         .map_err(|error| error.kind())
+        .map_err(Error::IO)
+}
+
+#[derive(Debug, Clone)]
+enum Error {
+    DialogClosed,
+    IO(io::ErrorKind),
 }
