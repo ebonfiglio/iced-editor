@@ -34,6 +34,7 @@ impl Editor {
 #[derive(Debug, Clone)]
 enum Message {
     Edit(text_editor::Action),
+    New,
     Open,
     FileOpened(Result<(PathBuf, Arc<String>), Error>),
 }
@@ -43,6 +44,11 @@ impl Editor {
         match message {
             Message::Edit(action) => {
                 self.content.perform(action);
+                Task::none()
+            }
+            Message::New => {
+                self.path = None;
+                self.content = text_editor::Content::new();
                 Task::none()
             }
             Message::Open => Task::perform(pick_file(), Message::FileOpened),
@@ -59,7 +65,10 @@ impl Editor {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let controls = row![button("Open").on_press(Message::Open)];
+        let controls = row![
+            button("New").on_press(Message::New),
+            button("Open").on_press(Message::Open)
+        ];
         let input = text_editor(&self.content)
             .height(Length::Fill)
             .on_action(Message::Edit);
@@ -72,7 +81,7 @@ impl Editor {
 
         let file_path = match self.path.as_deref().and_then(Path::to_str) {
             Some(path) => text(path).size(14),
-            None => text(""),
+            None => text("New file"),
         };
 
         let status_bar = row![file_path, horizontal_space(), position];
