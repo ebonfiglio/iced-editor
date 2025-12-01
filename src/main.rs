@@ -1,5 +1,5 @@
 use iced::{
-    Element, Length, Task, Theme,
+    Element, Font, Length, Task, Theme,
     widget::{button, column, container, horizontal_space, row, text, text_editor},
 };
 use smol::io;
@@ -9,6 +9,7 @@ use std::sync::Arc;
 pub fn main() -> iced::Result {
     iced::application("Iced Editor", Editor::update, Editor::view)
         .theme(Editor::theme)
+        .font(include_bytes!("../fonts/editor-icons.ttf").as_slice())
         .run_with(Editor::new)
 }
 
@@ -37,6 +38,8 @@ enum Message {
     New,
     Open,
     FileOpened(Result<(PathBuf, Arc<String>), Error>),
+    Save,
+    FileSaved(Result<PathBuf, Error>),
 }
 
 impl Editor {
@@ -44,6 +47,7 @@ impl Editor {
         match message {
             Message::Edit(action) => {
                 self.content.perform(action);
+                self.error = None;
                 Task::none()
             }
             Message::New => {
@@ -52,6 +56,19 @@ impl Editor {
                 Task::none()
             }
             Message::Open => Task::perform(pick_file(), Message::FileOpened),
+            Message::Save => {
+                let text = self.content.text();
+
+                Task::perform(save_file(self.path.clone(), text), Message::FileSaved)
+            }
+            Message::FileSaved(Ok((path))) =>{
+                self.path = Some(path);
+                Task::none()
+            } 
+            Message::FileSaved(Err(error)) =>{
+                self.error = Some(error);
+                Task::none()
+             }
             Message::FileOpened(Ok((path, contents))) => {
                 self.path = Some(path);
                 self.content = text_editor::Content::with_text(&contents);
@@ -66,9 +83,12 @@ impl Editor {
 
     fn view(&self) -> Element<'_, Message> {
         let controls = row![
-            button("New").on_press(Message::New),
-            button("Open").on_press(Message::Open)
-        ];
+            button(new_icon()).on_press(Message::New),
+            button(open_icon()).on_press(Message::Open),
+            button(save_icon()).on_press(Message::Save)
+        ]
+        .spacing(10);
+
         let input = text_editor(&self.content)
             .height(Length::Fill)
             .on_action(Message::Edit);
@@ -79,12 +99,16 @@ impl Editor {
             text(format!("{}:{}", line + 1, column + 1))
         };
 
-        let file_path = match self.path.as_deref().and_then(Path::to_str) {
+        let status = if let Some(Error::IOFailed(error)) = self.error.as_ref() {
+            text(error.to_string())
+        } else{
+         match self.path.as_deref().and_then(Path::to_str) {
             Some(path) => text(path).size(14),
             None => text("New file"),
-        };
+        }
+    };
 
-        let status_bar = row![file_path, horizontal_space(), position];
+        let status_bar = row![status, horizontal_space(), position];
 
         container(column![controls, input, status_bar].spacing(10))
             .padding(10)
@@ -111,17 +135,54 @@ async fn load_file(path: PathBuf) -> Result<(PathBuf, Arc<String>), Error> {
         .await
         .map(Arc::new)
         .map_err(|error| error.kind())
-        .map_err(Error::IO)?;
+        .map_err(Error::IOFailed)?;
 
     Ok((path, contents))
+}
+
+async fn save_file(path: Option<PathBuf>, text: String) -> Result<PathBuf, Error>{
+    let path = if let Some(path) = path {
+        path
+    }else{
+        rfd::AsyncFileDialog::new()
+        .set_title("Choose a file name...")
+        .save_file()
+        .await
+        .ok_or(Error::DialogClosed)
+        .map(|handle| handle.path().to_owned())?
+    };
+
+    smol::fs::write(&path, text)
+    .await
+    .map_err(|error| Error::IOFailed(error.kind()))?;
+
+    Ok(path)
 }
 
 fn default_file() -> PathBuf {
     PathBuf::from(format!("{}/src/main.rs", env!("CARGO_MANIFEST_DIR")))
 }
 
+fn new_icon<'a>() -> Element<'a, Message> {
+    icon('\u{E800}')
+}
+
+fn save_icon<'a>() -> Element<'a, Message> {
+    icon('\u{E801}')
+}
+
+fn open_icon<'a>() -> Element<'a, Message> {
+    icon('\u{F115}')
+}
+
+fn icon<'a>(codepoint: char) -> Element<'a, Message> {
+    const ICON_FONT: Font = Font::with_name("editor-icons");
+    text(codepoint).font(ICON_FONT).into()
+
+}
+
 #[derive(Debug, Clone)]
 enum Error {
     DialogClosed,
-    IO(io::ErrorKind),
+    IOFailed(io::ErrorKind),
 }
