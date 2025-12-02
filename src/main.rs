@@ -1,6 +1,7 @@
+use iced::theme;
 use iced::{
     Element, Font, Length, Task, Theme,
-    widget::{button, column, container, horizontal_space, row, text, text_editor},
+    widget::{button, column, container, horizontal_space, row, text, text_editor, tooltip},
 };
 use smol::io;
 use std::path::{Path, PathBuf};
@@ -61,14 +62,14 @@ impl Editor {
 
                 Task::perform(save_file(self.path.clone(), text), Message::FileSaved)
             }
-            Message::FileSaved(Ok((path))) =>{
+            Message::FileSaved(Ok((path))) => {
                 self.path = Some(path);
                 Task::none()
-            } 
-            Message::FileSaved(Err(error)) =>{
+            }
+            Message::FileSaved(Err(error)) => {
                 self.error = Some(error);
                 Task::none()
-             }
+            }
             Message::FileOpened(Ok((path, contents))) => {
                 self.path = Some(path);
                 self.content = text_editor::Content::with_text(&contents);
@@ -83,9 +84,9 @@ impl Editor {
 
     fn view(&self) -> Element<'_, Message> {
         let controls = row![
-            button(new_icon()).on_press(Message::New),
-            button(open_icon()).on_press(Message::Open),
-            button(save_icon()).on_press(Message::Save)
+            action(new_icon(), "New file", Message::New),
+            action(open_icon(), "Open file", Message::Open),
+            action(save_icon(), "Save file", Message::Save)
         ]
         .spacing(10);
 
@@ -101,12 +102,12 @@ impl Editor {
 
         let status = if let Some(Error::IOFailed(error)) = self.error.as_ref() {
             text(error.to_string())
-        } else{
-         match self.path.as_deref().and_then(Path::to_str) {
-            Some(path) => text(path).size(14),
-            None => text("New file"),
-        }
-    };
+        } else {
+            match self.path.as_deref().and_then(Path::to_str) {
+                Some(path) => text(path).size(14),
+                None => text("New file"),
+            }
+        };
 
         let status_bar = row![status, horizontal_space(), position];
 
@@ -140,21 +141,21 @@ async fn load_file(path: PathBuf) -> Result<(PathBuf, Arc<String>), Error> {
     Ok((path, contents))
 }
 
-async fn save_file(path: Option<PathBuf>, text: String) -> Result<PathBuf, Error>{
+async fn save_file(path: Option<PathBuf>, text: String) -> Result<PathBuf, Error> {
     let path = if let Some(path) = path {
         path
-    }else{
+    } else {
         rfd::AsyncFileDialog::new()
-        .set_title("Choose a file name...")
-        .save_file()
-        .await
-        .ok_or(Error::DialogClosed)
-        .map(|handle| handle.path().to_owned())?
+            .set_title("Choose a file name...")
+            .save_file()
+            .await
+            .ok_or(Error::DialogClosed)
+            .map(|handle| handle.path().to_owned())?
     };
 
     smol::fs::write(&path, text)
-    .await
-    .map_err(|error| Error::IOFailed(error.kind()))?;
+        .await
+        .map_err(|error| Error::IOFailed(error.kind()))?;
 
     Ok(path)
 }
@@ -178,7 +179,25 @@ fn open_icon<'a>() -> Element<'a, Message> {
 fn icon<'a>(codepoint: char) -> Element<'a, Message> {
     const ICON_FONT: Font = Font::with_name("editor-icons");
     text(codepoint).font(ICON_FONT).into()
+}
 
+fn action<'a>(
+    content: Element<'a, Message>,
+    label: &'a str,
+    on_press: Message,
+) -> Element<'a, Message> {
+    tooltip(
+        button(container(content).center_x(30))
+            .on_press(on_press)
+            .padding([5, 10]),
+        label,
+        tooltip::Position::FollowCursor,
+    )
+    .style(|theme| container::Style {
+        background: Some(theme.palette().background.into()),
+        ..Default::default()
+    })
+    .into()
 }
 
 #[derive(Debug, Clone)]
