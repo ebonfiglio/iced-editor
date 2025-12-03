@@ -1,3 +1,4 @@
+use iced::highlighter;
 use iced::theme;
 use iced::{
     Element, Font, Length, Task, Theme,
@@ -10,6 +11,7 @@ use std::sync::Arc;
 pub fn main() -> iced::Result {
     iced::application("Iced Editor", Editor::update, Editor::view)
         .theme(Editor::theme)
+        .default_font(Font::MONOSPACE)
         .font(include_bytes!("../fonts/editor-icons.ttf").as_slice())
         .run_with(Editor::new)
 }
@@ -92,6 +94,13 @@ impl Editor {
 
         let input = text_editor(&self.content)
             .height(Length::Fill)
+            .highlight(
+                self.path
+                    .as_ref()
+                    .and_then(|path| path.extension()?.to_str())
+                    .unwrap_or("rs"),
+                highlighter::Theme::SolarizedDark,
+            )
             .on_action(Message::Edit);
 
         let position = {
