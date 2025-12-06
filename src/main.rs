@@ -1,6 +1,5 @@
 use iced::highlighter;
 use iced::keyboard;
-use iced::theme;
 use iced::{
     Element, Font, Length, Subscription, Task, Theme,
     widget::{
@@ -75,7 +74,7 @@ impl Editor {
 
                 Task::perform(save_file(self.path.clone(), text), Message::FileSaved)
             }
-            Message::FileSaved(Ok((path))) => {
+            Message::FileSaved(Ok(path)) => {
                 self.path = Some(path);
                 Task::none()
             }
