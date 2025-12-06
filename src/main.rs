@@ -1,8 +1,11 @@
 use iced::highlighter;
+use iced::keyboard;
 use iced::theme;
 use iced::{
-    Element, Font, Length, Task, Theme,
-    widget::{button, column, container, horizontal_space, row, text, text_editor, tooltip},
+    Element, Font, Length, Subscription, Task, Theme,
+    widget::{
+        button, column, container, horizontal_space, pick_list, row, text, text_editor, tooltip,
+    },
 };
 use smol::io;
 use std::path::{Path, PathBuf};
@@ -11,6 +14,7 @@ use std::sync::Arc;
 pub fn main() -> iced::Result {
     iced::application("Iced Editor", Editor::update, Editor::view)
         .theme(Editor::theme)
+        .subscription(Editor::subscription)
         .default_font(Font::MONOSPACE)
         .font(include_bytes!("../fonts/editor-icons.ttf").as_slice())
         .run_with(Editor::new)
@@ -20,6 +24,8 @@ struct Editor {
     path: Option<PathBuf>,
     content: text_editor::Content,
     error: Option<Error>,
+    highlighter_theme: highlighter::Theme,
+    is_dirty: bool,
 }
 
 impl Editor {
@@ -29,6 +35,8 @@ impl Editor {
                 path: None,
                 content: text_editor::Content::new(),
                 error: None,
+                highlighter_theme: highlighter::Theme::SolarizedDark,
+                is_dirty: true,
             },
             Task::perform(load_file(default_file()), Message::FileOpened),
         )
@@ -43,19 +51,22 @@ enum Message {
     FileOpened(Result<(PathBuf, Arc<String>), Error>),
     Save,
     FileSaved(Result<PathBuf, Error>),
+    ThemeSelected(highlighter::Theme),
 }
 
 impl Editor {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Edit(action) => {
-                self.content.perform(action);
+                self.is_dirty = self.is_dirty || action.is_edit();
                 self.error = None;
+                self.content.perform(action);
                 Task::none()
             }
             Message::New => {
                 self.path = None;
                 self.content = text_editor::Content::new();
+                self.is_dirty = true;
                 Task::none()
             }
             Message::Open => Task::perform(pick_file(), Message::FileOpened),
@@ -70,25 +81,50 @@ impl Editor {
             }
             Message::FileSaved(Err(error)) => {
                 self.error = Some(error);
+                self.is_dirty = false;
                 Task::none()
             }
             Message::FileOpened(Ok((path, contents))) => {
                 self.path = Some(path);
                 self.content = text_editor::Content::with_text(&contents);
+                self.is_dirty = false;
                 Task::none()
             }
             Message::FileOpened(Err(error)) => {
                 self.error = Some(error);
                 Task::none()
             }
+            Message::ThemeSelected(highlighter_theme) => {
+                self.highlighter_theme = highlighter_theme;
+                Task::none()
+            }
         }
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        keyboard::on_key_press(|key, modifiers| match key {
+            keyboard::Key::Character(c) if c == "s" && modifiers.command() => Some(Message::Save),
+            keyboard::Key::Character(c) if c == "o" && modifiers.command() => Some(Message::Open),
+            keyboard::Key::Character(c) if c == "n" && modifiers.command() => Some(Message::New),
+            _ => None,
+        })
     }
 
     fn view(&self) -> Element<'_, Message> {
         let controls = row![
-            action(new_icon(), "New file", Message::New),
-            action(open_icon(), "Open file", Message::Open),
-            action(save_icon(), "Save file", Message::Save)
+            action(new_icon(), "New file", Some(Message::New)),
+            action(open_icon(), "Open file", Some(Message::Open)),
+            action(
+                save_icon(),
+                "Save file",
+                self.is_dirty.then_some(Message::Save)
+            ),
+            horizontal_space(),
+            pick_list(
+                highlighter::Theme::ALL,
+                Some(self.highlighter_theme),
+                Message::ThemeSelected
+            )
         ]
         .spacing(10);
 
@@ -99,7 +135,7 @@ impl Editor {
                     .as_ref()
                     .and_then(|path| path.extension()?.to_str())
                     .unwrap_or("rs"),
-                highlighter::Theme::SolarizedDark,
+                self.highlighter_theme,
             )
             .on_action(Message::Edit);
 
@@ -126,7 +162,11 @@ impl Editor {
     }
 
     fn theme(&self) -> Theme {
-        Theme::Dark
+        if self.highlighter_theme.is_dark() {
+            Theme::Dark
+        } else {
+            Theme::Light
+        }
     }
 }
 
@@ -193,12 +233,18 @@ fn icon<'a>(codepoint: char) -> Element<'a, Message> {
 fn action<'a>(
     content: Element<'a, Message>,
     label: &'a str,
-    on_press: Message,
+    on_press: Option<Message>,
 ) -> Element<'a, Message> {
+    let is_disabled = on_press.is_none();
     tooltip(
         button(container(content).center_x(30))
-            .on_press(on_press)
-            .padding([5, 10]),
+            .on_press_maybe(on_press)
+            .padding([5, 10])
+            .style(if is_disabled {
+                button::secondary
+            } else {
+                button::primary
+            }),
         label,
         tooltip::Position::FollowCursor,
     )
